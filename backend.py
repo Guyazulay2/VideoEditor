@@ -37,7 +37,10 @@ settings = {
     'aspect_ratio': '16:9',
     'trim_start': 0,
     'trim_end': None,
-    'output_filename': 'video'
+    'output_filename': 'video',
+    'rotation': 'none',
+    'framerate': '30',
+    'speed': '1'
 }
 
 def allowed_file(f):
@@ -123,12 +126,40 @@ def process_video(video_path):
         }
         scale = aspect_map.get(aspect, aspect_map['16:9'])
         
+        # Build rotation filter
+        rotation = settings.get('rotation', 'none')
+        rotation_filter = ''
+        if rotation == '90':
+            rotation_filter = 'transpose=1'  # 90 degrees clockwise
+        elif rotation == '-90':
+            rotation_filter = 'transpose=2'  # 90 degrees counter-clockwise
+        elif rotation == '180':
+            rotation_filter = 'hflip,vflip'  # 180 degrees
+        elif rotation == 'mirror':
+            rotation_filter = 'hflip'  # Mirror/horizontal flip
+        
+        # Combine filters
+        filters = [scale]
+        if rotation_filter:
+            filters.append(rotation_filter)
+        
+        # Speed control
+        speed = float(settings.get('speed', '1'))
+        if speed != 1:
+            filters.append(f'setpts={1/speed}*PTS')
+        
+        final_filter = ','.join(filters)
+        
         output_file = os.path.join(OUTPUT_DIR, f'{output_filename}.{output_fmt}')
+        
+        # Frame rate
+        framerate = settings.get('framerate', '30')
         
         cmd = [
             'ffmpeg', '-i', video_path,
             '-ss', str(trim_start), '-to', str(trim_end),
-            '-vf', scale,
+            '-vf', final_filter,
+            '-r', framerate,
             '-c:v', 'libx264', '-preset', 'fast', '-b:v', bitrate,
             '-c:a', 'aac', '-b:a', '128k',
             '-y', output_file
@@ -152,7 +183,10 @@ def process_video(video_path):
             'trim_end': trim_end,
             'trim_duration': trim_end - trim_start,
             'output_resolution': f'{base_width}x{base_height}',
-            'bitrate': bitrate
+            'bitrate': bitrate,
+            'rotation': rotation if rotation != 'none' else 'None',
+            'framerate': framerate,
+            'speed': speed
         }
         
         settings_file = os.path.join(OUTPUT_DIR, 'video_settings.json')
@@ -205,7 +239,7 @@ def settings_route():
         return jsonify(settings), 200
     
     data = request.get_json()
-    for key in ['output_format', 'quality', 'aspect_ratio', 'output_filename']:
+    for key in ['output_format', 'quality', 'aspect_ratio', 'output_filename', 'rotation', 'framerate', 'speed']:
         if key in data:
             settings[key] = data[key]
     for key in ['trim_start', 'trim_end']:
