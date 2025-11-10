@@ -1,0 +1,11 @@
+flask==3.0.0
+flask-cors==4.0.0
+werkzeug==3.0.1
+moviepy
+imageio==2.33.1
+imageio-ffmpeg==0.4.9
+openai-whisper
+librosa==0.10.0
+scipy==1.11.4
+numpy==1.24.3
+python-dotenv==1.0.0
