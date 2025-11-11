@@ -10,7 +10,7 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 CORS(app)
 
-BASE_DIR = os.path.expanduser('~/video-editor')
+BASE_DIR = os.path.expanduser('{PWD}/video-output')
 UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads')
 OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
 
