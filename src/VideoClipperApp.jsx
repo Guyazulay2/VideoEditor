@@ -127,7 +127,7 @@ export default function VideoClipperApp() {
         {/* Header */}
         <div className="text-center mb-12">
           <h1 className="text-5xl font-bold text-white mb-2">🎬 Video Editor</h1>
-          <p className="text-gray-300">Format • Quality • Trim • Subtitles</p>
+          <p className="text-gray-300">Format • Quality • Trim</p>
         </div>
 
         {/* Error Alert */}
