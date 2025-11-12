@@ -75,7 +75,6 @@ class JobManager:
 
 job_manager = JobManager()
 
-# Keep old state for compatibility
 state = {
     'status': 'idle',
     'progress': 0,
@@ -239,16 +238,16 @@ def process_video_job(job_id, video_path, job_settings):
         job_manager.update_job(job_id,
             status='complete',
             progress=100,
-            message='✅ Video ready!',
+            message=' Video ready!',
             output_file=os.path.basename(output_file),
             settings=settings_info,
             completed_at=datetime.now().isoformat()
         )
         
-        logger.info(f"[{job_id}] ✅ Video: {output_file}")
+        logger.info(f"[{job_id}]  Video: {output_file}")
         
     except Exception as e:
-        logger.error(f"[{job_id}] ❌ Error: {str(e)}")
+        logger.error(f"[{job_id}]  Error: {str(e)}")
         job_manager.update_job(job_id,
             status='error',
             progress=0,
@@ -256,6 +255,11 @@ def process_video_job(job_id, video_path, job_settings):
             error=str(e),
             completed_at=datetime.now().isoformat()
         )
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint"""
+    return jsonify({'status': 'ok'}), 200
 
 @app.route('/api/upload', methods=['POST'])
 def upload():
@@ -285,7 +289,7 @@ def upload():
             message='Ready'
         )
         
-        logger.info(f"[{job_id}] 📤 Uploaded: {filename}")
+        logger.info(f"[{job_id}]  Uploaded: {filename}")
         
         return jsonify({
             'job_id': job_id,
@@ -347,7 +351,7 @@ def process(job_id):
         # Submit to thread pool
         job_manager.executor.submit(process_video_job, job_id, job['video_path'], job_settings)
         
-        logger.info(f"[{job_id}] 🚀 Submitted to queue")
+        logger.info(f"[{job_id}]  Submitted to queue")
         
         return jsonify({'job_id': job_id, 'status': 'queued'}), 202
     except Exception as e:
@@ -403,6 +407,6 @@ def download(filename):
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    logger.info(f"🎬 Video Editor with {MAX_WORKERS} concurrent workers")
-    logger.info("📍 http://localhost:5000")
+    logger.info(f" Video Editor with {MAX_WORKERS} concurrent workers")
+    logger.info(" http://localhost:5000")
     app.run(debug=False, host='0.0.0.0', port=5000)
