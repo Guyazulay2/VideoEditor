@@ -1,0 +1,30 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    curl \
+    wget \
+    git \
+    vim \
+    nano \
+    htop \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --upgrade pip setuptools wheel
+COPY backend.py .
+
+RUN pip install \
+    flask \
+    flask-cors \
+    werkzeug \
+    requests
+
+RUN mkdir -p /root/video-editor/uploads /root/video-editor/output
+RUN chmod -R 755 /root/video-editor
+
+EXPOSE 5000
+
+CMD ["python", "backend.py"]
