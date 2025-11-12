@@ -2,35 +2,46 @@ version: '3.8'
 
 services:
   backend:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
     ports:
       - "5000:5000"
     volumes:
-      - ./uploads:/tmp/uploads
-      - ./output:/tmp/clipper_output
+      - video_uploads:/root/video-editor/uploads
+      - video_output:/root/video-editor/output
     environment:
       - FLASK_ENV=production
-      - UPLOAD_FOLDER=/tmp/uploads
-      - OUTPUT_FOLDER=/tmp/clipper_output
+      - FLASK_DEBUG=0
+      - PYTHONUNBUFFERED=1
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/progress"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   frontend:
-    image: node:18-alpine
-    working_dir: /app
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
     ports:
       - "3000:3000"
+    environment:
+      - VITE_API_URL=http://backend:5000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
     volumes:
       - ./src:/app/src
+      - ./index.html:/app/index.html
       - ./package.json:/app/package.json
       - ./vite.config.js:/app/vite.config.js
-      - ./index.html:/app/index.html
-    command: sh -c "npm install && npm run dev"
-    environment:
-      - VITE_API_URL=http://localhost:5000
-    depends_on:
-      - backend
-    restart: unless-stopped
+      - ./tailwind.config.js:/app/tailwind.config.js
+      - ./postcss.config.js:/app/postcss.config.js
 
 volumes:
-  uploads:
-  output:
+  video_uploads:
+  video_output:
