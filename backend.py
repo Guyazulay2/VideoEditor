@@ -3,14 +3,22 @@ import os
 import json
 import subprocess
 import threading
+import uuid
+from datetime import datetime
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
+from concurrent.futures import ThreadPoolExecutor
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
 
-BASE_DIR = os.path.expanduser('{PWD}/video-output')
+BASE_DIR = os.path.expanduser("root/video-output")
 UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads')
 OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
 
@@ -21,14 +29,61 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_DIR
 app.config['MAX_CONTENT_LENGTH'] = 1000 * 1024 * 1024
 
 ALLOWED = {'mp4', 'webm', 'avi', 'mov', 'mkv', 'flv', 'wmv'}
+MAX_WORKERS = 4  # Concurrent processing threads
 
+# Job tracking system
+class JobManager:
+    def __init__(self):
+        self.jobs = {}
+        self.lock = threading.Lock()
+        self.executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    
+    def create_job(self):
+        job_id = str(uuid.uuid4())[:8]
+        with self.lock:
+            self.jobs[job_id] = {
+                'id': job_id,
+                'status': 'idle',
+                'progress': 0,
+                'message': 'Ready',
+                'output_file': None,
+                'error': None,
+                'video_path': None,
+                'settings': None,
+                'created_at': datetime.now().isoformat(),
+                'started_at': None,
+                'completed_at': None
+            }
+        return job_id
+    
+    def get_job(self, job_id):
+        with self.lock:
+            return self.jobs.get(job_id)
+    
+    def update_job(self, job_id, **kwargs):
+        with self.lock:
+            if job_id in self.jobs:
+                self.jobs[job_id].update(kwargs)
+    
+    def get_running_jobs(self):
+        with self.lock:
+            return [j for j in self.jobs.values() if j['status'] in ['processing', 'uploading']]
+    
+    def get_all_jobs(self):
+        with self.lock:
+            return list(self.jobs.values())
+
+job_manager = JobManager()
+
+# Keep old state for compatibility
 state = {
     'status': 'idle',
     'progress': 0,
     'message': '',
     'output_file': None,
     'error': None,
-    'video_path': None
+    'video_path': None,
+    'running_count': 0
 }
 
 settings = {
@@ -65,23 +120,26 @@ def get_dimensions(path):
     except:
         return 1920, 1080
 
-import json
-
-def process_video(video_path):
-    global state
+def process_video_job(job_id, video_path, job_settings):
+    """Process video with error handling"""
+    job = job_manager.get_job(job_id)
+    if not job:
+        return
     
     try:
-        state['status'] = 'processing'
-        state['progress'] = 10
-        state['message'] = 'Analyzing video...'
+        job_manager.update_job(job_id, 
+            status='processing',
+            progress=10,
+            message='Analyzing video...',
+            started_at=datetime.now().isoformat()
+        )
         
         duration = get_duration(video_path)
         w, h = get_dimensions(video_path)
         
-        trim_start = float(settings.get('trim_start', 0))
-        trim_end = settings.get('trim_end')
+        trim_start = float(job_settings.get('trim_start', 0))
+        trim_end = job_settings.get('trim_end')
         
-        # Fix: Check if trim_end is None or convert it properly
         if trim_end is None or trim_end == 'None':
             trim_end = duration
         else:
@@ -90,22 +148,19 @@ def process_video(video_path):
         if trim_start >= trim_end:
             raise Exception("Invalid trim times")
         
-        state['progress'] = 30
-        state['message'] = 'Processing video...'
+        job_manager.update_job(job_id, progress=30, message='Processing video...')
         
-        output_fmt = settings.get('output_format', 'mp4')
-        quality = settings.get('quality', '1080p')
-        aspect = settings.get('aspect_ratio', '16:9')
-        output_filename = settings.get('output_filename', 'video')
+        output_fmt = job_settings.get('output_format', 'mp4')
+        quality = job_settings.get('quality', '1080p')
+        aspect = job_settings.get('aspect_ratio', '16:9')
+        output_filename = job_settings.get('output_filename', 'video')
         
-        # Clean filename - remove extension if user added it
+        # Clean filename
         if '.' in output_filename:
             output_filename = output_filename.rsplit('.', 1)[0]
-        
-        # Remove invalid characters
         output_filename = ''.join(c for c in output_filename if c.isalnum() or c in ('-', '_'))
         if not output_filename:
-            output_filename = 'video'
+            output_filename = f'video_{job_id}'
         
         quality_map = {
             '720p': {'bitrate': '2500k', 'width': 1280, 'height': 720},
@@ -117,7 +172,6 @@ def process_video(video_path):
         base_width = q_settings['width']
         base_height = q_settings['height']
         
-        # Generate scale filter based on aspect ratio and resolution
         aspect_map = {
             '16:9': f'scale={base_width}:{base_height}:force_original_aspect_ratio=decrease,pad={base_width}:{base_height}:(ow-iw)/2:(oh-ih)/2',
             '9:16': f'scale={int(base_height*9/16)}:{base_height}:force_original_aspect_ratio=decrease,pad={int(base_height*9/16)}:{base_height}:(ow-iw)/2:(oh-ih)/2',
@@ -126,34 +180,28 @@ def process_video(video_path):
         }
         scale = aspect_map.get(aspect, aspect_map['16:9'])
         
-        # Build rotation filter
-        rotation = settings.get('rotation', 'none')
+        rotation = job_settings.get('rotation', 'none')
         rotation_filter = ''
         if rotation == '90':
-            rotation_filter = 'transpose=1'  # 90 degrees clockwise
+            rotation_filter = 'transpose=1'
         elif rotation == '-90':
-            rotation_filter = 'transpose=2'  # 90 degrees counter-clockwise
+            rotation_filter = 'transpose=2'
         elif rotation == '180':
-            rotation_filter = 'hflip,vflip'  # 180 degrees
+            rotation_filter = 'hflip,vflip'
         elif rotation == 'mirror':
-            rotation_filter = 'hflip'  # Mirror/horizontal flip
+            rotation_filter = 'hflip'
         
-        # Combine filters
         filters = [scale]
         if rotation_filter:
             filters.append(rotation_filter)
         
-        # Speed control
-        speed = float(settings.get('speed', '1'))
+        speed = float(job_settings.get('speed', '1'))
         if speed != 1:
             filters.append(f'setpts={1/speed}*PTS')
         
         final_filter = ','.join(filters)
-        
         output_file = os.path.join(OUTPUT_DIR, f'{output_filename}.{output_fmt}')
-        
-        # Frame rate
-        framerate = settings.get('framerate', '30')
+        framerate = job_settings.get('framerate', '30')
         
         cmd = [
             'ffmpeg', '-i', video_path,
@@ -165,15 +213,14 @@ def process_video(video_path):
             '-y', output_file
         ]
         
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         
         if result.returncode != 0:
-            raise Exception("FFmpeg error")
+            raise Exception("FFmpeg encoding failed")
         
         if not os.path.exists(output_file):
             raise Exception("Output file not created")
         
-        # Save settings info
         settings_info = {
             'filename': f'{output_filename}.{output_fmt}',
             'output_format': output_fmt,
@@ -189,91 +236,173 @@ def process_video(video_path):
             'speed': speed
         }
         
-        settings_file = os.path.join(OUTPUT_DIR, 'video_settings.json')
-        with open(settings_file, 'w') as f:
-            json.dump(settings_info, f, indent=2)
+        job_manager.update_job(job_id,
+            status='complete',
+            progress=100,
+            message='✅ Video ready!',
+            output_file=os.path.basename(output_file),
+            settings=settings_info,
+            completed_at=datetime.now().isoformat()
+        )
         
-        state['status'] = 'complete'
-        state['progress'] = 100
-        state['message'] = '✅ Video ready!'
-        state['output_file'] = os.path.basename(output_file)
-        state['settings_info'] = settings_info
-        
-        print(f"✅ Video: {output_file}")
-        print(f"📊 Settings: {settings_info}")
+        logger.info(f"[{job_id}] ✅ Video: {output_file}")
         
     except Exception as e:
-        print(f"❌ Error: {e}")
-        state['error'] = str(e)
-        state['status'] = 'error'
-        state['message'] = f'Error: {str(e)}'
+        logger.error(f"[{job_id}] ❌ Error: {str(e)}")
+        job_manager.update_job(job_id,
+            status='error',
+            progress=0,
+            message=f'Error: {str(e)}',
+            error=str(e),
+            completed_at=datetime.now().isoformat()
+        )
 
 @app.route('/api/upload', methods=['POST'])
 def upload():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file'}), 400
-    
-    file = request.files['file']
-    if not file or not allowed_file(file.filename):
-        return jsonify({'error': 'Invalid file'}), 400
-    
-    filename = secure_filename(file.filename)
-    filepath = os.path.join(UPLOAD_DIR, filename)
-    file.save(filepath)
-    
-    state['video_path'] = filepath
-    
-    duration = get_duration(filepath)
-    width, height = get_dimensions(filepath)
-    
-    return jsonify({
-        'status': 'ready',
-        'duration': duration,
-        'width': width,
-        'height': height
-    }), 200
+    """Upload video - create new job"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file'}), 400
+        
+        file = request.files['file']
+        if not file or not allowed_file(file.filename):
+            return jsonify({'error': 'Invalid file'}), 400
+        
+        # Create new job
+        job_id = job_manager.create_job()
+        job_manager.update_job(job_id, status='uploading', message='Uploading...')
+        
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(UPLOAD_DIR, f'{job_id}_{filename}')
+        file.save(filepath)
+        
+        duration = get_duration(filepath)
+        width, height = get_dimensions(filepath)
+        
+        job_manager.update_job(job_id, 
+            video_path=filepath,
+            status='idle',
+            message='Ready'
+        )
+        
+        logger.info(f"[{job_id}] 📤 Uploaded: {filename}")
+        
+        return jsonify({
+            'job_id': job_id,
+            'status': 'ready',
+            'duration': duration,
+            'width': width,
+            'height': height
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Upload error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/settings', methods=['GET', 'POST'])
-def settings_route():
+@app.route('/api/settings/<job_id>', methods=['GET', 'POST'])
+def settings_route(job_id):
+    """Get/Set settings for specific job"""
+    job = job_manager.get_job(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+    
     if request.method == 'GET':
-        return jsonify(settings), 200
+        return jsonify(job.get('settings') or settings), 200
     
-    data = request.get_json()
-    for key in ['output_format', 'quality', 'aspect_ratio', 'output_filename', 'rotation', 'framerate', 'speed']:
-        if key in data:
-            settings[key] = data[key]
-    for key in ['trim_start', 'trim_end']:
-        if key in data and data[key] is not None:
-            settings[key] = float(data[key])
-    
-    return jsonify(settings), 200
+    try:
+        data = request.get_json()
+        job_settings = job.get('settings') or settings.copy()
+        
+        for key in ['output_format', 'quality', 'aspect_ratio', 'output_filename', 'rotation', 'framerate', 'speed']:
+            if key in data:
+                job_settings[key] = data[key]
+        for key in ['trim_start', 'trim_end']:
+            if key in data and data[key] is not None:
+                job_settings[key] = float(data[key])
+        
+        job_manager.update_job(job_id, settings=job_settings)
+        logger.info(f"[{job_id}] ⚙️ Settings updated")
+        
+        return jsonify(job_settings), 200
+    except Exception as e:
+        logger.error(f"Settings error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/process', methods=['POST'])
-def process():
-    if not state['video_path']:
-        return jsonify({'error': 'No video'}), 400
+@app.route('/api/process/<job_id>', methods=['POST'])
+def process(job_id):
+    """Start processing specific job"""
+    job = job_manager.get_job(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
     
-    state['status'] = 'processing'
-    state['progress'] = 0
-    state['error'] = None
+    if not job['video_path']:
+        return jsonify({'error': 'No video uploaded'}), 400
     
-    thread = threading.Thread(target=process_video, args=(state['video_path'],))
-    thread.daemon = True
-    thread.start()
+    if job['status'] != 'idle':
+        return jsonify({'error': f'Job already {job["status"]}'}), 400
     
-    return jsonify({'status': 'processing'}), 202
+    try:
+        job_settings = job.get('settings') or settings
+        
+        # Submit to thread pool
+        job_manager.executor.submit(process_video_job, job_id, job['video_path'], job_settings)
+        
+        logger.info(f"[{job_id}] 🚀 Submitted to queue")
+        
+        return jsonify({'job_id': job_id, 'status': 'queued'}), 202
+    except Exception as e:
+        logger.error(f"Process error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/jobs', methods=['GET'])
+def get_jobs():
+    """Get all jobs with statistics"""
+    try:
+        all_jobs = job_manager.get_all_jobs()
+        running = len(job_manager.get_running_jobs())
+        
+        return jsonify({
+            'jobs': all_jobs,
+            'stats': {
+                'total': len(all_jobs),
+                'running': running,
+                'completed': sum(1 for j in all_jobs if j['status'] == 'complete'),
+                'errors': sum(1 for j in all_jobs if j['status'] == 'error'),
+                'max_workers': MAX_WORKERS
+            }
+        }), 200
+    except Exception as e:
+        logger.error(f"Get jobs error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/status/<job_id>', methods=['GET'])
+def get_status(job_id):
+    """Get specific job status"""
+    job = job_manager.get_job(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+    return jsonify(job), 200
 
 @app.route('/api/progress', methods=['GET'])
 def progress():
+    """Legacy endpoint - returns old state + running count"""
+    running = len(job_manager.get_running_jobs())
+    state['running_count'] = running
     return jsonify(state), 200
 
 @app.route('/download/<filename>', methods=['GET'])
 def download(filename):
-    filepath = os.path.join(OUTPUT_DIR, secure_filename(filename))
-    if not os.path.exists(filepath):
-        return jsonify({'error': 'Not found'}), 404
-    return send_file(filepath, as_attachment=True, download_name=filename)
+    """Download processed video"""
+    try:
+        filepath = os.path.join(OUTPUT_DIR, secure_filename(filename))
+        if not os.path.exists(filepath):
+            return jsonify({'error': 'Not found'}), 404
+        return send_file(filepath, as_attachment=True, download_name=filename)
+    except Exception as e:
+        logger.error(f"Download error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    print("🎬 Video Editor - http://localhost:5000")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    logger.info(f"🎬 Video Editor with {MAX_WORKERS} concurrent workers")
+    logger.info("📍 http://localhost:5000")
+    app.run(debug=False, host='0.0.0.0', port=5000)
