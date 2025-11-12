@@ -4,12 +4,12 @@ services:
   backend:
     build:
       context: .
-      dockerfile: Dockerfile.backend
+      dockerfile: backend/Dockerfile.backend
     ports:
       - "5000:5000"
     volumes:
-      - video_uploads:/root/video-editor/uploads
-      - video_output:/root/video-editor/output
+      - video_uploads:/video-clipper/videos_output/uploads
+      - video_output:/video-clipper/videos_output/output
     environment:
       - FLASK_ENV=production
       - FLASK_DEBUG=0
@@ -25,7 +25,7 @@ services:
   frontend:
     build:
       context: .
-      dockerfile: Dockerfile.frontend
+      dockerfile: frontend/Dockerfile.frontend
     ports:
       - "3000:3000"
     environment:
@@ -35,12 +35,12 @@ services:
         condition: service_healthy
     restart: unless-stopped
     volumes:
-      - ./src:/app/src
-      - ./index.html:/app/index.html
-      - ./package.json:/app/package.json
-      - ./vite.config.js:/app/vite.config.js
-      - ./tailwind.config.js:/app/tailwind.config.js
-      - ./postcss.config.js:/app/postcss.config.js
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/package.json:/app/package.json
+      - ./frontend/vite.config.js:/app/vite.config.js
+      - ./frontend/tailwind.config.js:/app/tailwind.config.js
+      - ./frontend/postcss.config.js:/app/postcss.config.js
 
 volumes:
   video_uploads:
