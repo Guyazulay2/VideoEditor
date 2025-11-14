@@ -7,7 +7,7 @@ on:
     branches: ["master"]
 
 jobs:
-  build-and-test:
+  build-test-push:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo code
@@ -79,7 +79,7 @@ jobs:
 
 
   deploy:
-    needs: build-and-test
+    needs: build-test-push
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     steps:
