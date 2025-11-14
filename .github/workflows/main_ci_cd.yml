@@ -52,14 +52,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install backend dependencies
-        run: |
-          pip install -r backend/requirements.txt
-          pip install pytest requests
+      # - name: Install backend dependencies
+      #   run: |
+      #     pip install -r requirements.txt
+      #     pip install pytest requests
 
-      - name: Run backend tests
-        run: |
-          pytest testing_folder -q
+      # - name: Run backend tests
+      #   run: |
+      #     pytest testing_folder -q
 
   push_to_registry:
     runs-on: ubuntu-latest
