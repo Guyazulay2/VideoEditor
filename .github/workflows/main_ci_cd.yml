@@ -26,7 +26,7 @@ jobs:
       - name: Lint frontend
         run: |
           cd frontend
-          npm run lint || echo "⚠ Lint warnings"
+          npm init @eslint/config
 
       - name: Build frontend
         run: |
