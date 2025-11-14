@@ -23,11 +23,6 @@ jobs:
           cd frontend
           npm install
 
-      - name: Lint frontend
-        run: |
-          cd frontend
-          npm init @eslint/config
-
       - name: Build frontend
         run: |
           cd frontend
