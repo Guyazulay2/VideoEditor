@@ -7,7 +7,7 @@
 
 ## Installation and Run
 Clone the project and run it using Docker Compose:
-
+ee
 ```bash
 $ git clone https://github.com/Guyazulay2/VideoEditor.git
 $ cd VideoEditor
