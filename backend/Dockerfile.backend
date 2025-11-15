@@ -22,8 +22,6 @@ RUN pip install \
     werkzeug \
     requests
 
-RUN mkdir -p /root/video-editor/uploads /root/video-editor/output
-RUN chmod -R 755 /root/video-editor
 
 EXPOSE 5000
 
