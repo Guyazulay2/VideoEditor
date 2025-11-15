@@ -52,7 +52,7 @@ jobs:
           image-ref: "videoeditor-backend:latest"
           format: "table"
           exit-code: "1"
-          vuln-type: "os,libary"
+          vuln-type: "os,library"
           severity: "CRITICAL,HIGH"
 
       - name: Security Scan - Frontend Image
@@ -61,7 +61,7 @@ jobs:
           image-ref: "videoeditor-frontend:latest"
           format: "table"
           exit-code: "1"
-          vuln-type: "os,libary"
+          vuln-type: "os,library"
           severity: "CRITICAL,HIGH"
 
       # - name: Set up Python
