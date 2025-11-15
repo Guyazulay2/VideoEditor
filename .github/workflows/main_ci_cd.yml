@@ -46,10 +46,28 @@ jobs:
           timeout 30s bash -c 'until curl -sf http://localhost:5000/api/progress; do sleep 1; done'
 
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Security Scan - Backend Image
+        uses: aquasecurity/trivy-action@master
         with:
-          python-version: "3.11"
+          image-ref: "videoeditor-backend:latest"
+          format: "table"
+          exit-code: "1"
+          vuln-type: "os,libary"
+          severity: "CRITICAL,HIGH"
+
+      - name: Security Scan - Frontend Image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "videoeditor-frontend:latest"
+          format: "table"
+          exit-code: "1"
+          vuln-type: "os,libary"
+          severity: "CRITICAL,HIGH"
+
+      # - name: Set up Python
+      #   uses: actions/setup-python@v4
+      #   with:
+      #     python-version: "3.11"
 
       # - name: Install backend dependencies
       #   run: |
