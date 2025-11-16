@@ -13,6 +13,11 @@ jobs:
       - name: Checkout repo code
         uses: actions/checkout@v3
 
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -45,7 +50,6 @@ jobs:
           echo "Waiting for backend..."
           timeout 30s bash -c 'until curl -sf http://localhost:5000/api/progress; do sleep 1; done'
 
-
       - name: Security Scan - Backend Image
         uses: aquasecurity/trivy-action@master
         with:
@@ -64,10 +68,6 @@ jobs:
           vuln-type: "os,library"
           severity: "CRITICAL,HIGH"
 
-      # - name: Set up Python
-      #   uses: actions/setup-python@v4
-      #   with:
-      #     python-version: "3.11"
 
       # - name: Install backend dependencies
       #   run: |

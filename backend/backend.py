@@ -11,27 +11,28 @@ from werkzeug.utils import secure_filename
 from concurrent.futures import ThreadPoolExecutor
 import logging
 
-# Setup logging
+
+BACKEND_PORT = int(os.getenv("BACKEND_PORT", 5000))
+BACKEND_HOST = os.getenv("BACKEND_HOST", "0.0.0.0")
+UPLOAD_DIR = os.getenv("UPLOAD_FOLDER", "./video-output/uploads")
+OUTPUT_DIR = os.getenv("OUTPUT_FOLDER", "./video-output/output")
+
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
 
-BASE_DIR = os.path.expanduser("video-output")
-UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads')
-OUTPUT_DIR = os.path.join(BASE_DIR, 'output')
-
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_DIR
 app.config['MAX_CONTENT_LENGTH'] = 1000 * 1024 * 1024
 
 ALLOWED = {'mp4', 'webm', 'avi', 'mov', 'mkv', 'flv', 'wmv'}
-MAX_WORKERS = 4  # Concurrent processing threads
+MAX_WORKERS = 4     
 
-# Job tracking system
 class JobManager:
     def __init__(self):
         self.jobs = {}
@@ -272,7 +273,6 @@ def upload():
         if not file or not allowed_file(file.filename):
             return jsonify({'error': 'Invalid file'}), 400
         
-        # Create new job
         job_id = job_manager.create_job()
         job_manager.update_job(job_id, status='uploading', message='Uploading...')
         
@@ -325,7 +325,7 @@ def settings_route(job_id):
                 job_settings[key] = float(data[key])
         
         job_manager.update_job(job_id, settings=job_settings)
-        logger.info(f"[{job_id}] ⚙️ Settings updated")
+        logger.info(f"[{job_id}] Settings updated")
         
         return jsonify(job_settings), 200
     except Exception as e:
@@ -348,7 +348,6 @@ def process(job_id):
     try:
         job_settings = job.get('settings') or settings
         
-        # Submit to thread pool
         job_manager.executor.submit(process_video_job, job_id, job['video_path'], job_settings)
         
         logger.info(f"[{job_id}]  Submitted to queue")
@@ -408,5 +407,5 @@ def download(filename):
 
 if __name__ == '__main__':
     logger.info(f" Video Editor with {MAX_WORKERS} concurrent workers")
-    logger.info(" http://localhost:5000")
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    logger.info(f" http://{BACKEND_HOST}:{BACKEND_PORT}")
+    app.run(debug=False, host=BACKEND_HOST, port=BACKEND_PORT)
