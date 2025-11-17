@@ -1,21 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Upload, Download, Loader, CheckCircle, AlertCircle, X, Trash2 } from 'lucide-react';
 
+const API = import.meta.env.VITE_API_URL;
+console.log(API);
+
 export default function VideoClipperApp() {
   const fileInputRef = useRef(null);
   
-  // Running videos tracking
   const [allJobs, setAllJobs] = useState([]);
   const [runningVideos, setRunningVideos] = useState({});
   const [removedJobs, setRemovedJobs] = useState(new Set());
-  const [activeTab, setActiveTab] = useState('ready'); // ready, running, completed
+  const [activeTab, setActiveTab] = useState('ready'); 
   
-  // Jobs map for each video
   const [jobsSettings, setJobsSettings] = useState({});
   const [jobsInfo, setJobsInfo] = useState({});
   const [jobsFilenames, setJobsFilenames] = useState({});
 
-  // Load removed jobs from localStorage on mount
   useEffect(() => {
     const saved = localStorage.getItem('removedJobs');
     if (saved) {
@@ -32,7 +32,7 @@ export default function VideoClipperApp() {
   useEffect(() => {
     const fetchAllJobs = async () => {
       try {
-        const res = await fetch('http://localhost:5000/api/jobs');
+        const res = await fetch(`${API}/api/jobs`);
         const data = await res.json();
         setAllJobs(data.jobs || []);
         setRunningVideos(data.stats || {});
@@ -61,7 +61,7 @@ export default function VideoClipperApp() {
     formData.append('file', selectedFile);
 
     try {
-      const res = await fetch('http://localhost:5000/api/upload', {
+      const res = await fetch(`${API}/api/upload`, {
         method: 'POST',
         body: formData
       });
@@ -128,13 +128,13 @@ export default function VideoClipperApp() {
         if (!confirm) return;
       }
 
-      await fetch(`http://localhost:5000/api/settings/${jobId}`, {
+      await fetch(`${API}/api/settings/${jobId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings)
       });
 
-      const res = await fetch(`http://localhost:5000/api/process/${jobId}`, {
+      const res = await fetch(`${API}/api/process/${jobId}`, {
         method: 'POST'
       });
 
@@ -147,7 +147,7 @@ export default function VideoClipperApp() {
   const handleDownload = (jobId) => {
     const job = allJobs.find(j => j.id === jobId);
     if (job?.output_file) {
-      window.location.href = `http://localhost:5000/download/${job.output_file}`;
+      window.location.href = `${API}/download/${job.output_file}`;
     }
   };
 
