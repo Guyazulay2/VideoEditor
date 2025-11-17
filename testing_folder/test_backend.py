@@ -1,5 +1,9 @@
+from dotenv import load_dotenv
 import requests
 import os
+
+load_dotenv()
+video = os.getenv("video_for_testing")
 
 BASE_URL = "http://localhost:5000"
 
@@ -11,7 +15,7 @@ def test_healthcheck():
 
 def test_video_upload():
     """Test uploading a sample video"""
-    test_file_path = os.path.join('testing_folder', '3.mp4')
+    test_file_path = os.path.join('testing_folder', video)
     assert os.path.exists(test_file_path), "Missing test video (3.mp4)"
     
     with open(test_file_path, 'rb') as f:
