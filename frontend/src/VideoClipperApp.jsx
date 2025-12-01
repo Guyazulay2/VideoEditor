@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Upload, Download, Loader, CheckCircle, AlertCircle, X, Trash2 } from 'lucide-react';
 
-const API = import.meta.env.VITE_API_URL;
-console.log(API);
+const API = import.meta.env.VITE_API_URL || '';
+console.log('API URL:', API);
 
 export default function VideoClipperApp() {
   const fileInputRef = useRef(null);
@@ -16,6 +16,7 @@ export default function VideoClipperApp() {
   const [jobsInfo, setJobsInfo] = useState({});
   const [jobsFilenames, setJobsFilenames] = useState({});
 
+  // Load removed jobs from localStorage on mount
   useEffect(() => {
     const saved = localStorage.getItem('removedJobs');
     if (saved) {
@@ -28,7 +29,7 @@ export default function VideoClipperApp() {
     localStorage.setItem('removedJobs', JSON.stringify(Array.from(removedJobs)));
   }, [removedJobs]);
 
-  // Poll all jobs
+  // Poll all jobs - FIXED: Changed from 500ms to 2000ms (2 seconds)
   useEffect(() => {
     const fetchAllJobs = async () => {
       try {
@@ -42,7 +43,8 @@ export default function VideoClipperApp() {
     };
 
     fetchAllJobs();
-    const interval = setInterval(fetchAllJobs, 500);
+    // FIXED: Changed interval from 500ms to 2000ms to reduce server load
+    const interval = setInterval(fetchAllJobs, 2000);
     return () => clearInterval(interval);
   }, []);
 
@@ -198,133 +200,168 @@ export default function VideoClipperApp() {
 
   // Determine which jobs to show based on tab
   let displayJobs = [];
-  if (activeTab === 'ready') {
-    displayJobs = idleJobs;
-  } else if (activeTab === 'running') {
-    displayJobs = processingJobs;
-  } else if (activeTab === 'completed') {
-    displayJobs = [...completedJobs, ...errorJobs];
-  }
+  if (activeTab === 'ready') displayJobs = idleJobs;
+  if (activeTab === 'running') displayJobs = processingJobs;
+  if (activeTab === 'completed') displayJobs = [...completedJobs, ...errorJobs];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-black p-4 md:p-8">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900 text-white p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-5xl md:text-6xl font-bold text-white mb-3">🎬 Video Editor</h1>
-          <p className="text-gray-300 text-lg mb-8">Concurrent Processing • Multi Video • Real-time Editing</p>
-          
-          {/* Stats Tabs */}
-          <div className="flex justify-center gap-3 mb-8 flex-wrap">
-            <button
-              onClick={() => setActiveTab('ready')}
-              className={`px-6 py-3 rounded-xl font-bold transition ${
-                activeTab === 'ready'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-blue-600/30 text-gray-300 hover:bg-blue-600/50'
-              }`}
-            >
-              <span className="text-sm">📝 Ready</span>
-              <p className="text-2xl font-bold">{idleJobs.length}</p>
-            </button>
-            
-            <button
-              onClick={() => setActiveTab('running')}
-              className={`px-6 py-3 rounded-xl font-bold transition ${
-                activeTab === 'running'
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-purple-600/30 text-gray-300 hover:bg-purple-600/50'
-              }`}
-            >
-              <span className="text-sm">⏳ Running</span>
-              <p className="text-2xl font-bold">{processingJobs.length}</p>
-            </button>
-            
-            <button
-              onClick={() => setActiveTab('completed')}
-              className={`px-6 py-3 rounded-xl font-bold transition ${
-                activeTab === 'completed'
-                  ? 'bg-green-600 text-white'
-                  : 'bg-green-600/30 text-gray-300 hover:bg-green-600/50'
-              }`}
-            >
-              <span className="text-sm">✅ Completed</span>
-              <p className="text-2xl font-bold">{completedJobs.length + errorJobs.length}</p>
-            </button>
-
-            {(completedJobs.length > 0 || errorJobs.length > 0) && (
-              <button
-                onClick={handleClearAll}
-                className="px-4 py-3 rounded-xl font-bold bg-red-600/30 text-red-300 hover:bg-red-600/50 transition flex items-center gap-2"
-                title="Clear completed and error jobs"
-              >
-                <Trash2 size={20} />
-                Clear
-              </button>
-            )}
-          </div>
+        <div className="text-center mb-10">
+          <h1 className="text-5xl font-black mb-3 bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
+            🎬 Video Clipper Pro
+          </h1>
+          <p className="text-gray-300 text-lg font-semibold">Professional Video Editing Made Easy</p>
         </div>
 
-        {/* Upload Section - Always Visible */}
-        <div className="bg-gray-900 rounded-xl shadow-xl p-8 mb-12 border border-gray-800">
-          <h2 className="text-white font-bold text-xl mb-6">📤 Add Video</h2>
-          <div
+        {/* Upload */}
+        <div className="mb-8">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileSelect}
+            accept="video/*"
+            className="hidden"
+          />
+          <button
             onClick={() => fileInputRef.current?.click()}
-            className="border-3 border-dashed border-purple-500 rounded-xl p-12 text-center cursor-pointer hover:border-purple-400 transition hover:bg-purple-900/10"
+            className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-bold py-6 rounded-xl transition text-xl flex items-center justify-center gap-3 shadow-2xl"
           >
-            <Upload className="w-16 h-16 text-purple-400 mx-auto mb-4" />
-            <p className="text-white font-bold text-lg mb-2">Upload Video</p>
-            <p className="text-gray-400 text-base mb-2">MP4, WebM, AVI, MOV, MKV (max 1GB)</p>
-            <p className="text-gray-500 text-sm">Best results: MP4 format, up to 1080p</p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="video/*"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
+            <Upload size={28} />
+            Upload Video
+          </button>
+        </div>
+
+        {/* Stats Bar */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <div className="bg-gray-800/70 backdrop-blur p-5 rounded-xl border border-gray-700">
+            <p className="text-gray-400 text-sm font-semibold mb-1">Ready</p>
+            <p className="text-3xl font-black text-purple-400">{idleJobs.length}</p>
+          </div>
+          <div className="bg-gray-800/70 backdrop-blur p-5 rounded-xl border border-gray-700">
+            <p className="text-gray-400 text-sm font-semibold mb-1">Processing</p>
+            <p className="text-3xl font-black text-yellow-400">{processingJobs.length}</p>
+          </div>
+          <div className="bg-gray-800/70 backdrop-blur p-5 rounded-xl border border-gray-700">
+            <p className="text-gray-400 text-sm font-semibold mb-1">Completed</p>
+            <p className="text-3xl font-black text-green-400">{completedJobs.length}</p>
+          </div>
+          <div className="bg-gray-800/70 backdrop-blur p-5 rounded-xl border border-gray-700">
+            <p className="text-gray-400 text-sm font-semibold mb-1">Total</p>
+            <p className="text-3xl font-black text-blue-400">{filteredJobs.length}</p>
           </div>
         </div>
+
+        {/* Tabs */}
+        <div className="flex gap-3 mb-8">
+          <button
+            onClick={() => setActiveTab('ready')}
+            className={`flex-1 py-4 rounded-xl font-bold text-lg transition ${
+              activeTab === 'ready'
+                ? 'bg-purple-600 text-white shadow-lg'
+                : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50'
+            }`}
+          >
+            📹 Ready ({idleJobs.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('running')}
+            className={`flex-1 py-4 rounded-xl font-bold text-lg transition ${
+              activeTab === 'running'
+                ? 'bg-yellow-600 text-white shadow-lg'
+                : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50'
+            }`}
+          >
+            ⏳ Running ({processingJobs.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('completed')}
+            className={`flex-1 py-4 rounded-xl font-bold text-lg transition ${
+              activeTab === 'completed'
+                ? 'bg-green-600 text-white shadow-lg'
+                : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50'
+            }`}
+          >
+            ✅ Done ({completedJobs.length + errorJobs.length})
+          </button>
+        </div>
+
+        {/* Clear All Button - only show in completed tab */}
+        {activeTab === 'completed' && (completedJobs.length > 0 || errorJobs.length > 0) && (
+          <div className="mb-6">
+            <button
+              onClick={handleClearAll}
+              className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg transition flex items-center justify-center gap-2"
+            >
+              <Trash2 size={20} />
+              Clear All Completed
+            </button>
+          </div>
+        )}
 
         {/* Jobs Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Ready to Edit Jobs */}
+        <div className="grid gap-6">
+          {/* Ready to Process Jobs */}
           {activeTab === 'ready' && idleJobs.map(job => {
             const settings = jobsSettings[job.id] || {};
             const info = jobsInfo[job.id] || {};
-            const filename = jobsFilenames[job.id] || 'Video';
-            const duration = info.duration || 100;
-            
+            const duration = info.duration || 0;
+
             return (
-              <div key={job.id} className="bg-gray-900 rounded-xl shadow-xl overflow-hidden border-2 border-blue-500/30 hover:border-blue-500/60 transition">
-                <div className="p-6 bg-blue-900/20 border-b border-gray-800">
-                  <div className="flex justify-between items-start gap-4">
-                    <div>
-                      <p className="text-blue-300 font-bold text-lg">📝 Ready to Edit</p>
-                      <p className="text-white font-semibold text-base mt-3">📹 Video = <span className="text-purple-300">{filename}</span></p>
+              <div key={job.id} className="bg-gray-900 rounded-xl shadow-xl overflow-hidden border-2 border-purple-500/30">
+                <div className="p-6 bg-purple-900/20 border-b border-gray-800">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Upload className="w-6 h-6 text-purple-400" />
+                      <div>
+                        <p className="text-purple-300 font-bold text-lg">Ready to Process</p>
+                        <p className="text-gray-400 text-sm">📹 {jobsFilenames[job.id] || 'Video'}</p>
+                      </div>
                     </div>
                     <button
                       onClick={() => handleRemoveJob(job.id)}
-                      className="text-gray-400 hover:text-red-400 transition flex-shrink-0 p-2 hover:bg-red-900/20 rounded"
-                      title="Remove this video"
+                      className="text-gray-400 hover:text-red-400 transition p-2 rounded-lg hover:bg-red-900/20"
                     >
                       <X size={24} />
                     </button>
                   </div>
                 </div>
 
-                <div className="p-6 space-y-5">
-                  {/* Info */}
-                  <div className="bg-gray-800/50 p-4 rounded-lg">
-                    <p className="text-gray-300 text-base">Duration: <span className="text-white font-bold text-lg">{duration.toFixed(1)}s</span></p>
-                    {info.width && <p className="text-gray-300 text-base mt-2">Resolution: <span className="text-white font-bold text-lg">{info.width}x{info.height}</span></p>}
+                <div className="p-6 space-y-6">
+                  {/* Video Info */}
+                  <div className="bg-gray-800/30 p-4 rounded-lg grid grid-cols-3 gap-4 text-center">
+                    <div>
+                      <p className="text-gray-400 text-sm font-semibold">Duration</p>
+                      <p className="text-white font-bold text-lg">{duration.toFixed(1)}s</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400 text-sm font-semibold">Resolution</p>
+                      <p className="text-white font-bold text-lg">{info.width}x{info.height}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400 text-sm font-semibold">Format</p>
+                      <p className="text-white font-bold text-lg">{settings.output_format?.toUpperCase() || 'MP4'}</p>
+                    </div>
+                  </div>
+
+                  {/* Output Filename */}
+                  <div>
+                    <label className="block text-gray-300 font-semibold mb-3 text-base">📝 Output Filename</label>
+                    <input
+                      type="text"
+                      value={settings.output_filename || ''}
+                      onChange={(e) => updateJobSettings(job.id, { output_filename: e.target.value })}
+                      className="w-full p-4 bg-gray-800 border border-gray-700 rounded-lg text-white font-semibold text-base focus:ring-2 focus:ring-purple-600 focus:border-transparent"
+                      placeholder="Enter filename..."
+                    />
                   </div>
 
                   {/* Format */}
                   <div>
-                    <label className="block text-gray-300 font-semibold mb-3 text-base">📁 Format</label>
-                    <div className="grid grid-cols-4 gap-2">
-                      {['mp4', 'webm', 'avi', 'mkv'].map(fmt => (
+                    <label className="block text-gray-300 font-semibold mb-3 text-base">🎞️ Output Format</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['mp4', 'mkv', 'webm'].map(fmt => (
                         <button
                           key={fmt}
                           onClick={() => updateJobSettings(job.id, { output_format: fmt })}
@@ -353,9 +390,54 @@ export default function VideoClipperApp() {
                               ? 'bg-purple-600 text-white'
                               : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
                           }`}
-                          title={q === '2160p' ? '⚠️ Very slow conversion' : ''}
                         >
                           {q}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Framerate */}
+                  <div>
+                    <label className="block text-gray-300 font-semibold mb-3 text-base">🎯 Framerate</label>
+                    <div className="grid grid-cols-4 gap-2">
+                      {['24', '30', '60', '120'].map(fps => (
+                        <button
+                          key={fps}
+                          onClick={() => updateJobSettings(job.id, { framerate: fps })}
+                          className={`p-3 rounded-lg font-bold text-sm transition ${
+                            settings.framerate === fps
+                              ? 'bg-purple-600 text-white'
+                              : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                          }`}
+                        >
+                          {fps} FPS
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Rotation */}
+                  <div>
+                    <label className="block text-gray-300 font-semibold mb-3 text-base">🔄 Rotation</label>
+                    <div className="grid grid-cols-5 gap-2">
+                      {[
+                        { value: 'none', label: 'None' },
+                        { value: '90', label: '↻ 90°' },
+                        { value: '-90', label: '↺ 90°' },
+                        { value: '180', label: '↻ 180°' },
+                        { value: 'mirror', label: '⇄ Mirror' }
+                      ].map(rot => (
+                        <button
+                          key={rot.value}
+                          onClick={() => updateJobSettings(job.id, { rotation: rot.value })}
+                          className={`p-3 rounded-lg font-bold text-sm transition ${
+                            settings.rotation === rot.value
+                              ? 'bg-purple-600 text-white'
+                              : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                          }`}
+                        >
+                          {rot.label}
                         </button>
                       ))}
                     </div>
@@ -498,17 +580,12 @@ export default function VideoClipperApp() {
                 <div className="flex items-center gap-3">
                   <CheckCircle className="w-6 h-6 text-green-400" />
                   <p className="text-green-300 font-bold text-lg">✅ Completed</p>
-                  {/* <p className="text-gray-400 text-sm ml-auto">📹 {jobsFilenames[job.id] || 'Video'}</p> */}
-                  {/* <p className="text-green-300 font-bold text-lg"> Video Name:  {jobsFilenames[job.id] || 'Video'}</p> */}
-
                 </div>
               </div>
               <div className="p-6 space-y-4">
                 {job.settings && (
-
                   <div className="bg-gray-800/50 p-4 rounded-lg space-y-2">
-                    <p className="text-green-300 font-bold text-lg"> Video Name:  {jobsFilenames[job.id] || 'Video'}</p>
-
+                    <p className="text-green-300 font-bold text-lg">Video Name: {jobsFilenames[job.id] || 'Video'}</p>
                     <p className="text-gray-300 text-base"><span className="text-gray-500">Format:</span> <span className="text-white font-bold">{job.settings.output_format.toUpperCase()}</span></p>
                     <p className="text-gray-300 text-base"><span className="text-gray-500">Quality:</span> <span className="text-white font-bold">{job.settings.quality}</span></p>
                     <p className="text-gray-300 text-base"><span className="text-gray-500">Duration:</span> <span className="text-white font-bold">{job.settings.trim_duration?.toFixed(2)}s</span></p>

@@ -11,37 +11,62 @@ from werkzeug.utils import secure_filename
 from concurrent.futures import ThreadPoolExecutor
 import logging
 
-
+# --- Configuration ---
 BACKEND_PORT = int(os.getenv("BACKEND_PORT", 5000))
 BACKEND_HOST = os.getenv("BACKEND_HOST", "0.0.0.0")
 UPLOAD_DIR = os.getenv("UPLOAD_FOLDER", "./video-output/uploads")
 OUTPUT_DIR = os.getenv("OUTPUT_FOLDER", "./video-output/output")
+# קובץ לשמירת הנתונים כדי למנוע איפוסים וריצודים
+DB_FILE = os.path.join(OUTPUT_DIR, "jobs_db.json")
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
 
-
 app.config['UPLOAD_FOLDER'] = UPLOAD_DIR
-app.config['MAX_CONTENT_LENGTH'] = 1000 * 1024 * 1024
-
+app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024 * 1024  # 1 GB
+    
 ALLOWED = {'mp4', 'webm', 'avi', 'mov', 'mkv', 'flv', 'wmv'}
 MAX_WORKERS = 4     
 
-class JobManager:
-    def __init__(self):
+# --- Persistence Manager ---
+class PersistentJobManager:
+    def __init__(self, db_path):
+        self.db_path = db_path
         self.jobs = {}
         self.lock = threading.Lock()
         self.executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+        self._load_from_disk()
+    
+    def _save_to_disk(self):
+        """Saves current jobs state to JSON file"""
+        try:
+            with open(self.db_path, 'w') as f:
+                json.dump(self.jobs, f, default=str, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save DB: {e}")
+
+    def _load_from_disk(self):
+        """Loads jobs state from JSON file"""
+        if os.path.exists(self.db_path):
+            try:
+                with open(self.db_path, 'r') as f:
+                    self.jobs = json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to load DB: {e}")
+                self.jobs = {}
     
     def create_job(self):
         job_id = str(uuid.uuid4())[:8]
         with self.lock:
+            # Load fresh state just in case another worker updated it
+            self._load_from_disk() 
+            
             self.jobs[job_id] = {
                 'id': job_id,
                 'status': 'idle',
@@ -55,38 +80,35 @@ class JobManager:
                 'started_at': None,
                 'completed_at': None
             }
+            self._save_to_disk()
         return job_id
     
     def get_job(self, job_id):
-        with self.lock:
-            return self.jobs.get(job_id)
+        # Always reload to get latest status from file
+        self._load_from_disk()
+        return self.jobs.get(job_id)
     
     def update_job(self, job_id, **kwargs):
         with self.lock:
+            self._load_from_disk()
             if job_id in self.jobs:
                 self.jobs[job_id].update(kwargs)
+                self._save_to_disk()
     
     def get_running_jobs(self):
-        with self.lock:
-            return [j for j in self.jobs.values() if j['status'] in ['processing', 'uploading']]
+        self._load_from_disk()
+        return [j for j in self.jobs.values() if j['status'] in ['processing', 'uploading']]
     
     def get_all_jobs(self):
-        with self.lock:
-            return list(self.jobs.values())
+        self._load_from_disk()
+        # Sort by creation date (newest first)
+        return sorted(list(self.jobs.values()), key=lambda x: x.get('created_at', ''), reverse=True)
 
-job_manager = JobManager()
+# אתחול המנהל עם נתיב לקובץ השמירה
+job_manager = PersistentJobManager(DB_FILE)
 
-state = {
-    'status': 'idle',
-    'progress': 0,
-    'message': '',
-    'output_file': None,
-    'error': None,
-    'video_path': None,
-    'running_count': 0
-}
-
-settings = {
+# Default settings
+default_settings = {
     'output_format': 'mp4',
     'quality': '1080p',
     'aspect_ratio': '16:9',
@@ -108,23 +130,23 @@ def get_duration(path):
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         return float(result.stdout.strip())
     except:
-        return None
+        return 0
 
 def get_dimensions(path):
     try:
         cmd = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
                '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', path]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        w, h = result.stdout.strip().split('x')
-        return int(w), int(h)
+        parts = result.stdout.strip().split('x')
+        if len(parts) == 2:
+            return int(parts[0]), int(parts[1])
+        return 1920, 1080
     except:
         return 1920, 1080
 
 def process_video_job(job_id, video_path, job_settings):
     """Process video with error handling"""
-    job = job_manager.get_job(job_id)
-    if not job:
-        return
+    # Note: We don't need get_job here immediately because update_job handles locking/loading
     
     try:
         job_manager.update_job(job_id, 
@@ -134,19 +156,24 @@ def process_video_job(job_id, video_path, job_settings):
             started_at=datetime.now().isoformat()
         )
         
+        if not os.path.exists(video_path):
+             raise Exception("Source video file not found")
+
         duration = get_duration(video_path)
         w, h = get_dimensions(video_path)
         
         trim_start = float(job_settings.get('trim_start', 0))
         trim_end = job_settings.get('trim_end')
         
-        if trim_end is None or trim_end == 'None':
+        if not trim_end or str(trim_end) == 'None':
             trim_end = duration
         else:
             trim_end = float(trim_end)
         
         if trim_start >= trim_end:
-            raise Exception("Invalid trim times")
+            # Fix invalid trim automatically if possible
+            trim_start = 0
+            trim_end = duration
         
         job_manager.update_job(job_id, progress=30, message='Processing video...')
         
@@ -200,7 +227,7 @@ def process_video_job(job_id, video_path, job_settings):
             filters.append(f'setpts={1/speed}*PTS')
         
         final_filter = ','.join(filters)
-        output_file = os.path.join(OUTPUT_DIR, f'{output_filename}.{output_fmt}')
+        output_file_path = os.path.join(OUTPUT_DIR, f'{output_filename}.{output_fmt}')
         framerate = job_settings.get('framerate', '30')
         
         cmd = [
@@ -210,15 +237,17 @@ def process_video_job(job_id, video_path, job_settings):
             '-r', framerate,
             '-c:v', 'libx264', '-preset', 'fast', '-b:v', bitrate,
             '-c:a', 'aac', '-b:a', '128k',
-            '-y', output_file
+            '-y', output_file_path
         ]
         
+        logger.info(f"Running ffmpeg for job {job_id}")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         
         if result.returncode != 0:
+            logger.error(f"FFmpeg stderr: {result.stderr}")
             raise Exception("FFmpeg encoding failed")
         
-        if not os.path.exists(output_file):
+        if not os.path.exists(output_file_path):
             raise Exception("Output file not created")
         
         settings_info = {
@@ -239,16 +268,16 @@ def process_video_job(job_id, video_path, job_settings):
         job_manager.update_job(job_id,
             status='complete',
             progress=100,
-            message=' Video ready!',
-            output_file=os.path.basename(output_file),
+            message='Video ready!',
+            output_file=os.path.basename(output_file_path),
             settings=settings_info,
             completed_at=datetime.now().isoformat()
         )
         
-        logger.info(f"[{job_id}]  Video: {output_file}")
+        logger.info(f"[{job_id}] Video completed: {output_file_path}")
         
     except Exception as e:
-        logger.error(f"[{job_id}]  Error: {str(e)}")
+        logger.error(f"[{job_id}] Error: {str(e)}")
         job_manager.update_job(job_id,
             status='error',
             progress=0,
@@ -257,14 +286,14 @@ def process_video_job(job_id, video_path, job_settings):
             completed_at=datetime.now().isoformat()
         )
 
+# --- Routes ---
+
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint"""
     return jsonify({'status': 'ok'}), 200
 
 @app.route('/api/upload', methods=['POST'])
 def upload():
-    """Upload video - create new job"""
     try:
         if 'file' not in request.files:
             return jsonify({'error': 'No file'}), 400
@@ -289,7 +318,7 @@ def upload():
             message='Ready'
         )
         
-        logger.info(f"[{job_id}]  Uploaded: {filename}")
+        logger.info(f"[{job_id}] Uploaded: {filename}")
         
         return jsonify({
             'job_id': job_id,
@@ -305,28 +334,23 @@ def upload():
 
 @app.route('/api/settings/<job_id>', methods=['GET', 'POST'])
 def settings_route(job_id):
-    """Get/Set settings for specific job"""
     job = job_manager.get_job(job_id)
     if not job:
         return jsonify({'error': 'Job not found'}), 404
     
     if request.method == 'GET':
-        return jsonify(job.get('settings') or settings), 200
+        return jsonify(job.get('settings') or default_settings), 200
     
     try:
         data = request.get_json()
-        job_settings = job.get('settings') or settings.copy()
+        job_settings = job.get('settings') or default_settings.copy()
         
-        for key in ['output_format', 'quality', 'aspect_ratio', 'output_filename', 'rotation', 'framerate', 'speed']:
-            if key in data:
-                job_settings[key] = data[key]
-        for key in ['trim_start', 'trim_end']:
+        # Safe update of settings
+        for key in default_settings.keys():
             if key in data and data[key] is not None:
-                job_settings[key] = float(data[key])
+                 job_settings[key] = data[key]
         
         job_manager.update_job(job_id, settings=job_settings)
-        logger.info(f"[{job_id}] Settings updated")
-        
         return jsonify(job_settings), 200
     except Exception as e:
         logger.error(f"Settings error: {str(e)}")
@@ -334,24 +358,20 @@ def settings_route(job_id):
 
 @app.route('/api/process/<job_id>', methods=['POST'])
 def process(job_id):
-    """Start processing specific job"""
     job = job_manager.get_job(job_id)
     if not job:
         return jsonify({'error': 'Job not found'}), 404
     
-    if not job['video_path']:
+    if not job.get('video_path'):
         return jsonify({'error': 'No video uploaded'}), 400
     
-    if job['status'] != 'idle':
-        return jsonify({'error': f'Job already {job["status"]}'}), 400
+    # Allow retrying if error or idle
+    if job['status'] in ['processing', 'uploading']:
+        return jsonify({'error': f'Job is {job["status"]}'}), 400
     
     try:
-        job_settings = job.get('settings') or settings
-        
+        job_settings = job.get('settings') or default_settings
         job_manager.executor.submit(process_video_job, job_id, job['video_path'], job_settings)
-        
-        logger.info(f"[{job_id}]  Submitted to queue")
-        
         return jsonify({'job_id': job_id, 'status': 'queued'}), 202
     except Exception as e:
         logger.error(f"Process error: {str(e)}")
@@ -359,7 +379,6 @@ def process(job_id):
 
 @app.route('/api/jobs', methods=['GET'])
 def get_jobs():
-    """Get all jobs with statistics"""
     try:
         all_jobs = job_manager.get_all_jobs()
         running = len(job_manager.get_running_jobs())
@@ -370,8 +389,7 @@ def get_jobs():
                 'total': len(all_jobs),
                 'running': running,
                 'completed': sum(1 for j in all_jobs if j['status'] == 'complete'),
-                'errors': sum(1 for j in all_jobs if j['status'] == 'error'),
-                'max_workers': MAX_WORKERS
+                'errors': sum(1 for j in all_jobs if j['status'] == 'error')
             }
         }), 200
     except Exception as e:
@@ -380,32 +398,26 @@ def get_jobs():
 
 @app.route('/api/status/<job_id>', methods=['GET'])
 def get_status(job_id):
-    """Get specific job status"""
     job = job_manager.get_job(job_id)
     if not job:
         return jsonify({'error': 'Job not found'}), 404
     return jsonify(job), 200
 
-@app.route('/api/progress', methods=['GET'])
-def progress():
-    """Legacy endpoint - returns old state + running count"""
-    running = len(job_manager.get_running_jobs())
-    state['running_count'] = running
-    return jsonify(state), 200
-
 @app.route('/download/<filename>', methods=['GET'])
 def download(filename):
-    """Download processed video"""
     try:
-        filepath = os.path.join(OUTPUT_DIR, secure_filename(filename))
+        # Security check - sanitize filename
+        filename = secure_filename(filename)
+        filepath = os.path.join(OUTPUT_DIR, filename)
         if not os.path.exists(filepath):
-            return jsonify({'error': 'Not found'}), 404
+            return jsonify({'error': 'File not found'}), 404
         return send_file(filepath, as_attachment=True, download_name=filename)
     except Exception as e:
         logger.error(f"Download error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    logger.info(f" Video Editor with {MAX_WORKERS} concurrent workers")
-    logger.info(f" http://{BACKEND_HOST}:{BACKEND_PORT}")
+    logger.info(f"Video Editor Backend Started")
+    logger.info(f"Storage: {OUTPUT_DIR}")
+    # In production with Gunicorn, this line is skipped, but app object is used
     app.run(debug=False, host=BACKEND_HOST, port=BACKEND_PORT)

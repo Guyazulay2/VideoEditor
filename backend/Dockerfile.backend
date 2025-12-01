@@ -1,26 +1,37 @@
+# backend/Dockerfile
 FROM python:3.11-slim
 
 WORKDIR /app
 
+# התקנות מערכתיות נחוצות
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    build-essential \
     curl \
     wget \
     git \
     vim \
     nano \
     htop \
-    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --upgrade pip setuptools wheel
-COPY backend/backend.py .
-
+# העתקת וקינון דרישות (אם יש לך requirements.txt עדיף להשתמש בו)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install \
     flask \
     flask-cors \
     werkzeug \
-    requests
+    requests \
+    gunicorn
 
+# העתקת כל קבצי ה־backend
+COPY backend.py /app/
 
-CMD ["python", "backend.py"]
+# חשיפת פורט (ממתין ל־.env להגדיר BACKEND_PORT, ברירת מחדל 5000)
+ARG PORT=5000
+ENV PORT=${PORT}
+EXPOSE ${PORT}
+
+# הפעלת היישום (וודא שבבקשה-הפעלת ה־Flask משתמשת ב-host=0.0.0.0 ו-port env)
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "--timeout", "300", "backend:app"]
